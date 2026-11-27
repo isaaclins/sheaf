@@ -2,7 +2,9 @@
 // so any sync tool (iCloud, Dropbox, Syncthing, git) can carry them. In a browser
 // they live in IndexedDB.
 import * as idb from "idb-keyval";
-import { BaseDirectory, mkdir, readDir, readTextFile, remove as rm, writeTextFile } from "@tauri-apps/plugin-fs";
+import { BaseDirectory, documentDir, join } from "@tauri-apps/api/path";
+import { mkdir, readDir, readTextFile, remove as rm, writeFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import { openPath } from "@tauri-apps/plugin-opener";
 
 export type Doc = {
   id: string; // "2026-11-27" for daily notes, random otherwise
@@ -21,7 +23,10 @@ export async function loadAll(): Promise<Doc[]> {
   if (!native) return (await idb.values()) as Doc[];
   await mkdir(DIR, { ...opts, recursive: true });
   const files = (await readDir(DIR, opts)).filter((f) => f.name.endsWith(".json"));
-  return Promise.all(files.map(async (f) => JSON.parse(await readTextFile(`${DIR}/${f.name}`, opts))));
+  const docs = await Promise.all(
+    files.map((f) => readTextFile(`${DIR}/${f.name}`, opts).then(JSON.parse).catch(() => null)), // skip broken files
+  );
+  return docs.filter(Boolean);
 }
 
 export async function save(doc: Doc) {
@@ -35,3 +40,27 @@ export async function remove(id: string) {
 }
 
 export const newId = () => crypto.randomUUID().slice(0, 8);
+
+// Attachments are stored inside the note as data URLs that carry the file name.
+export const toDataUrl = (f: File) =>
+  new Promise<string>((ok) => {
+    const r = new FileReader();
+    r.onload = () => ok((r.result as string).replace(";base64,", `;name=${encodeURIComponent(f.name)};base64,`));
+    r.readAsDataURL(f);
+  });
+
+// The editor opens attachments with window.open, which can't show data URLs. Save them instead.
+export async function openAttachment(url: string) {
+  const name = decodeURIComponent(url.match(/;name=([^;,]+)/)?.[1] ?? "attachment").replace(/[\\/]/g, "_");
+  const bytes = new Uint8Array(await (await fetch(url)).arrayBuffer());
+  if (!native) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([bytes]));
+    a.download = name;
+    a.click();
+    return;
+  }
+  await mkdir(`${DIR}/files`, { ...opts, recursive: true });
+  await writeFile(`${DIR}/files/${name}`, bytes, opts);
+  await openPath(await join(await documentDir(), DIR, "files", name));
+}

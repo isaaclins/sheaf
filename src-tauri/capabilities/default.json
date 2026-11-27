@@ -1,8 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Read and write notes in Documents/Sheaf",
-  "windows": ["main"],
+  "description": "Read and write notes in Documents/Sheaf, open attachments",
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
@@ -12,6 +14,25 @@
     "fs:allow-read-text-file",
     "fs:allow-write-text-file",
     "fs:allow-remove",
-    { "identifier": "fs:scope", "allow": [{ "path": "$DOCUMENT/Sheaf" }, { "path": "$DOCUMENT/Sheaf/**" }] }
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        {
+          "path": "$DOCUMENT/Sheaf"
+        },
+        {
+          "path": "$DOCUMENT/Sheaf/**"
+        }
+      ]
+    },
+    "fs:allow-write-file",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        {
+          "path": "$DOCUMENT/Sheaf/files/**"
+        }
+      ]
+    }
   ]
 }

@@ -13,7 +13,7 @@ import {
   RiAddLine, RiArrowDownSLine, RiArrowLeftSLine, RiArrowRightSLine, RiCalendarLine,
   RiFileTextLine, RiMenuLine, RiMoreLine, RiSunLine,
 } from "react-icons/ri";
-import { Doc, loadAll, newId, remove, save } from "./store";
+import { Doc, loadAll, newId, openAttachment, remove, save, toDataUrl } from "./store";
 import "./App.css";
 
 // ---------- dates ----------
@@ -54,28 +54,37 @@ const inline = (b: any): any[] =>
 const text = (b: any) =>
   inline(b).map((i) => i.text ?? (i.type === "ref" ? label(i.props.id, i.props.label) : i.content?.map((c: any) => c.text).join("") ?? "")).join("");
 const stripIds = (blocks: any[]): any[] => blocks.map(({ id, children, ...b }) => ({ ...b, children: stripIds(children ?? []) }));
+const openTasks = (blocks: any[]): any[] =>
+  blocks.flatMap((b) => (b.type === "checkListItem" && !b.props.checked ? [b] : openTasks(b.children ?? [])));
 const blankDay = (id: string): Doc => ({ id, kind: "day", title: "", blocks: [], updated: 0 });
-const readFile = (f: File) =>
-  new Promise<string>((ok) => {
-    const r = new FileReader();
-    r.onload = () => ok(r.result as string);
-    r.readAsDataURL(f);
-  });
+const gone = new Set<string>(); // deleted this session: never save them again
+let queue = Promise.resolve(); // writes run one after another, so an older one never lands last
+
+const winOpen = window.open.bind(window);
+window.open = ((url?: string | URL, ...rest: any[]) =>
+  String(url).startsWith("data:") ? (openAttachment(String(url)), null) : winOpen(url, ...rest)) as typeof window.open;
 
 export default function App() {
   const [docs, setDocs] = useState<Record<string, Doc> | null>(null);
   const [route, setRoute] = useState<{ id: string; block?: string }>({ id: today() });
   const [drawer, setDrawer] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    loadAll().then((list) => setDocs(Object.fromEntries(list.map((d) => [d.id, d]))));
+    loadAll()
+      .then((list) => setDocs(Object.fromEntries(list.map((d) => [d.id, d]))))
+      .catch((e) => setError(String(e)));
   }, []);
+  if (error) return <p className="error">Sheaf can't open Documents/Sheaf: {error}</p>;
   if (!docs) return null;
   for (const d of Object.values(docs)) titles.set(d.id, d.title);
 
   const put = (doc: Doc) => {
+    if (gone.has(doc.id)) return Promise.resolve();
     setDocs((p) => ({ ...p, [doc.id]: doc }));
-    save(doc);
+    const done = queue.then(() => save(doc));
+    queue = done.catch((e) => alert(`Couldn't save "${doc.title || doc.id}": ${e}`));
+    return done;
   };
   const open = (id: string, block?: string) => {
     setRoute({ id, block });
@@ -87,10 +96,11 @@ export default function App() {
     return doc;
   };
   const destroy = (id: string) => {
-    const gone = [id];
-    for (let i = 0; i < gone.length; i++) for (const d of Object.values(docs)) if (d.parent === gone[i]) gone.push(d.id);
-    setDocs((p) => Object.fromEntries(Object.entries(p!).filter(([k]) => !gone.includes(k))));
-    gone.forEach(remove);
+    const ids = [id];
+    for (let i = 0; i < ids.length; i++) for (const d of Object.values(docs)) if (d.parent === ids[i]) ids.push(d.id);
+    ids.forEach((k) => gone.add(k));
+    setDocs((p) => Object.fromEntries(Object.entries(p!).filter(([k]) => !gone.has(k))));
+    ids.forEach(remove);
     open(today());
   };
 
@@ -160,20 +170,19 @@ function Page({ doc, focus, ctx, menu }: { doc: Doc; focus?: string; ctx: any; m
   const editor = useCreateBlockNote({
     schema,
     initialContent: doc.blocks.length ? doc.blocks : undefined,
-    uploadFile: readFile,
+    uploadFile: toDataUrl,
   });
   const latest = useRef(doc);
-  const timer = useRef<number>(undefined);
   const [title, setTitle] = useState(doc.title);
-  const [openTasks, setOpenTasks] = useState(0);
+  const [taskCount, setTaskCount] = useState(0);
   const [more, setMore] = useState(false);
+  const [arm, setArm] = useState(false);
 
   const persist = (patch: Partial<Doc>) => {
     latest.current = { ...latest.current, ...patch, updated: Date.now() };
-    clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => put(latest.current), 300);
+    put(latest.current); // every change is written right away
   };
-  const countTasks = () => setOpenTasks(editor.document.filter((b) => b.type === "checkListItem" && !b.props.checked).length);
+  const countTasks = () => setTaskCount(openTasks(editor.document).length);
 
   useEffect(() => {
     countTasks();
@@ -184,16 +193,13 @@ function Page({ doc, focus, ctx, menu }: { doc: Doc; focus?: string; ctx: any; m
       el.classList.add("flash");
       editor.setTextCursorPosition(focus!, "end");
     }, 50);
-    return () => {
-      if (timer.current) put(latest.current); // flush on leaving the page
-    };
   }, []);
 
   const target = doc.id < today() ? today() : shift(doc.id, 1);
-  const rollover = () => {
-    const tasks = editor.document.filter((b) => b.type === "checkListItem" && !b.props.checked);
+  const rollover = async () => {
+    const tasks = openTasks(editor.document);
     const t = docs[target] ?? blankDay(target);
-    put({ ...t, blocks: [...t.blocks, ...tasks], updated: Date.now() });
+    await put({ ...t, blocks: [...t.blocks, ...tasks], updated: Date.now() });
     editor.removeBlocks(tasks);
   };
 
@@ -253,13 +259,13 @@ function Page({ doc, focus, ctx, menu }: { doc: Doc; focus?: string; ctx: any; m
       : doc.kind === "template"
         ? [
             ["New document from template", () => open(create("doc", undefined, stripIds(editor.document), title).id)],
-            ["Delete template", () => confirm("Delete this template?") && destroy(doc.id)],
+            [arm ? "Click again to delete" : "Delete template", () => (arm ? destroy(doc.id) : setArm(true))],
           ]
         : [
             ["New subdocument", () => open(create("doc", doc.id).id)],
             ["Save as template", () => open(create("template", undefined, stripIds(editor.document), title).id)],
             ["Export PDF", () => window.print()],
-            ["Delete", () => confirm("Delete this document and its subdocuments?") && destroy(doc.id)],
+            [arm ? "Click again to delete" : "Delete", () => (arm ? destroy(doc.id) : setArm(true))],
           ];
 
   return (
@@ -270,13 +276,15 @@ function Page({ doc, focus, ctx, menu }: { doc: Doc; focus?: string; ctx: any; m
         </button>
         <div className="grow" data-tauri-drag-region />
         <div className="more">
-          <button className="icon" onClick={() => setMore(!more)} aria-label="More">
+          <button className="icon" onClick={() => { setMore(!more); setArm(false); }} aria-label="More">
             <RiMoreLine />
           </button>
           {more && (
-            <div className="pop" onClick={() => setMore(false)}>
+            <div className="pop">
               {actions.map(([t, f]) => (
-                <button key={t} onClick={f}>{t}</button>
+                <button key={t} className={t.startsWith("Click again") ? "danger" : ""} onClick={() => { f(); if (!t.startsWith("Delete")) setMore(false); }}>
+                  {t}
+                </button>
               ))}
             </div>
           )}
@@ -317,9 +325,9 @@ function Page({ doc, focus, ctx, menu }: { doc: Doc; focus?: string; ctx: any; m
             </>
           )}
         </header>
-        {doc.kind === "day" && openTasks > 0 && (
+        {doc.kind === "day" && taskCount > 0 && (
           <button className="chip roll" onClick={rollover}>
-            Move {openTasks} open {openTasks === 1 ? "task" : "tasks"} to {target === today() ? "today" : "tomorrow"}
+            Move {taskCount} open {taskCount === 1 ? "task" : "tasks"} to {target === today() ? "today" : "tomorrow"}
           </button>
         )}
         <BlockNoteView editor={editor} slashMenu={false} onChange={() => { persist({ blocks: editor.document }); countTasks(); }}>
