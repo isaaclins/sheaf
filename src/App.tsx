@@ -199,10 +199,11 @@ function Page({ doc, focus, ctx, menu }: { doc: Doc; focus?: string; ctx: any; m
   const rollover = () => {
     const tasks = openTasks(editor.document);
     const t = docs[target] ?? blankDay(target);
-    editor.removeBlocks(tasks);
+    // Saves run in order, so the destination is written before this page's removal is.
     put({ ...t, blocks: [...t.blocks, ...tasks], updated: Date.now() }).catch(() =>
       editor.insertBlocks(tasks, editor.document[editor.document.length - 1], "after"), // put them back
     );
+    editor.removeBlocks(tasks);
   };
 
   const backlinks = useMemo(
