@@ -196,14 +196,18 @@ function Page({ doc, focus, ctx, menu }: { doc: Doc; focus?: string; ctx: any; m
   }, []);
 
   const target = doc.id < today() ? today() : shift(doc.id, 1);
-  const rollover = () => {
+  const rollover = async () => {
     const tasks = openTasks(editor.document);
     const t = docs[target] ?? blankDay(target);
-    // Saves run in order, so the destination is written before this page's removal is.
-    put({ ...t, blocks: [...t.blocks, ...tasks], updated: Date.now() }).catch(() =>
-      editor.insertBlocks(tasks, editor.document[editor.document.length - 1], "after"), // put them back
-    );
-    editor.removeBlocks(tasks);
+    editor.isEditable = false; // nobody edits the moving tasks while the destination saves
+    try {
+      await put({ ...t, blocks: [...t.blocks, ...tasks], updated: Date.now() });
+      editor.removeBlocks(tasks); // only once the destination is safely on disk
+    } catch {
+      // put already showed the error; the tasks stay here
+    } finally {
+      editor.isEditable = true;
+    }
   };
 
   const backlinks = useMemo(
