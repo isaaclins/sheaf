@@ -15,7 +15,7 @@ Your notes are plain JSON files in `Documents/Sheaf`, so you can sync them with 
 ## Get it
 
 - **macOS, Windows, Linux**: [latest release](https://github.com/isaaclins/sheaf/releases/latest)
-- **iPhone, Android, any browser**: [isaaclins.github.io/sheaf](https://isaaclins.github.io/sheaf/) (add it to your home screen; notes stay in that browser)
+- **iPhone, Android, any browser**: [isaaclins.com/sheaf](https://isaaclins.com/sheaf/) (add it to your home screen; notes stay in that browser)
 
 ## Build it
 
