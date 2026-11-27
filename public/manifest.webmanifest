@@ -1,0 +1,9 @@
+{
+  "name": "Sheaf",
+  "short_name": "Sheaf",
+  "display": "standalone",
+  "start_url": "./",
+  "background_color": "#fafaf9",
+  "theme_color": "#fafaf9",
+  "icons": [{ "src": "icon.png", "sizes": "1024x1024", "type": "image/png" }]
+}
