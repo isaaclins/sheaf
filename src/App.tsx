@@ -58,7 +58,7 @@ const openTasks = (blocks: any[]): any[] =>
   blocks.flatMap((b) => (b.type === "checkListItem" && !b.props.checked ? [b] : openTasks(b.children ?? [])));
 const blankDay = (id: string): Doc => ({ id, kind: "day", title: "", blocks: [], updated: 0 });
 const gone = new Set<string>(); // deleted this session: never save them again
-let queue = Promise.resolve(); // writes run one after another, so an older one never lands last
+let queue: Promise<unknown> = Promise.resolve(); // writes run one after another, so an older one never lands last
 
 const winOpen = window.open.bind(window);
 window.open = ((url?: string | URL, ...rest: any[]) =>
@@ -82,7 +82,7 @@ export default function App() {
   const put = (doc: Doc) => {
     if (gone.has(doc.id)) return Promise.resolve();
     setDocs((p) => ({ ...p, [doc.id]: doc }));
-    const done = queue.then(() => save(doc));
+    const done = queue.then(() => (gone.has(doc.id) ? undefined : save(doc)));
     queue = done.catch((e) => alert(`Couldn't save "${doc.title || doc.id}": ${e}`));
     return done;
   };
@@ -100,7 +100,7 @@ export default function App() {
     for (let i = 0; i < ids.length; i++) for (const d of Object.values(docs)) if (d.parent === ids[i]) ids.push(d.id);
     ids.forEach((k) => gone.add(k));
     setDocs((p) => Object.fromEntries(Object.entries(p!).filter(([k]) => !gone.has(k))));
-    ids.forEach(remove);
+    queue = queue.then(() => Promise.all(ids.map(remove))).catch((e) => alert(`Couldn't delete: ${e}`));
     open(today());
   };
 
@@ -196,11 +196,13 @@ function Page({ doc, focus, ctx, menu }: { doc: Doc; focus?: string; ctx: any; m
   }, []);
 
   const target = doc.id < today() ? today() : shift(doc.id, 1);
-  const rollover = async () => {
+  const rollover = () => {
     const tasks = openTasks(editor.document);
     const t = docs[target] ?? blankDay(target);
-    await put({ ...t, blocks: [...t.blocks, ...tasks], updated: Date.now() });
     editor.removeBlocks(tasks);
+    put({ ...t, blocks: [...t.blocks, ...tasks], updated: Date.now() }).catch(() =>
+      editor.insertBlocks(tasks, editor.document[editor.document.length - 1], "after"), // put them back
+    );
   };
 
   const backlinks = useMemo(

@@ -3,7 +3,7 @@
 // they live in IndexedDB.
 import * as idb from "idb-keyval";
 import { BaseDirectory, documentDir, join } from "@tauri-apps/api/path";
-import { mkdir, readDir, readTextFile, remove as rm, writeFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import { mkdir, readDir, readTextFile, remove as rm, rename, writeFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { openPath } from "@tauri-apps/plugin-opener";
 
 export type Doc = {
@@ -31,7 +31,9 @@ export async function loadAll(): Promise<Doc[]> {
 
 export async function save(doc: Doc) {
   if (!native) return idb.set(doc.id, doc);
-  await writeTextFile(`${DIR}/${doc.id}.json`, JSON.stringify(doc), opts);
+  // Write a temp file, then swap it in, so a failed write never damages the saved note.
+  await writeTextFile(`${DIR}/${doc.id}.json.tmp`, JSON.stringify(doc), opts);
+  await rename(`${DIR}/${doc.id}.json.tmp`, `${DIR}/${doc.id}.json`, { oldPathBaseDir: opts.baseDir, newPathBaseDir: opts.baseDir });
 }
 
 export async function remove(id: string) {
